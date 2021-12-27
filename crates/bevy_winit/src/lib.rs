@@ -30,11 +30,19 @@ use winit::dpi::LogicalSize;
 #[derive(Default)]
 pub struct WinitPlugin;
 
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+struct CursorPosition(pub Vec2);
+
 impl Plugin for WinitPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WinitWindows>()
             .set_runner(winit_runner)
             .add_system_to_stage(CoreStage::PostUpdate, change_window.exclusive_system());
+
+        #[cfg(target_arch = "wasm32")]
+        app.init_resource::<CursorPosition>();
+
         let event_loop = EventLoop::new();
         handle_initial_window_events(&mut app.world, &event_loop);
         app.insert_non_send_resource(event_loop);
@@ -314,10 +322,29 @@ pub fn winit_runner_with(mut app: App) {
                         window
                             .update_cursor_physical_position_from_backend(Some(physical_position));
 
+                        let position = (physical_position / window.scale_factor()).as_vec2();
                         cursor_moved_events.send(CursorMoved {
                             id: window_id,
-                            position: (physical_position / window.scale_factor()).as_vec2(),
+                            position,
                         });
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let mut cursor_position =
+                                world.get_resource_mut::<CursorPosition>().unwrap();
+
+                            let delta = cursor_position.0 - position;
+                            if delta != Vec2::ZERO {
+                                let mut mouse_motion_events =
+                                    world.get_resource_mut::<Events<MouseMotion>>().unwrap();
+
+                                mouse_motion_events.send(MouseMotion {
+                                    delta: Vec2::new(delta.x as f32, delta.y as f32),
+                                });
+                            }
+
+                            cursor_position.0 = position.clone();
+                        }
                     }
                     WindowEvent::CursorEntered { .. } => {
                         let mut cursor_entered_events =
